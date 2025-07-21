@@ -49,19 +49,39 @@ export async function extractTextFromPDF(filePath: string, pageRanges?: PageRang
         }));
       } else {
         // Extract specified page ranges
+        console.log(`Total pages available: ${pages.length}`);
+        console.log(
+          `Page split preview:`,
+          pages.slice(0, 3).map((p, i) => `Page ${i + 1}: ${p.substring(0, 50)}...`)
+        );
+
         for (const range of pageRanges) {
           console.log(`Extracting pages ${range.start}-${range.end}${range.description ? ` (${range.description})` : ""}`);
-          for (let pageNum = range.start; pageNum <= range.end && pageNum <= pages.length; pageNum++) {
-            const pageText = pages[pageNum - 1] || "";
-            if (pageText.trim()) {
+
+          // Since the PDF text might not split perfectly by pages, let's try a different approach
+          // Calculate approximate text positions for page ranges
+          const totalText = simpleData.text;
+          const textPerPage = Math.floor(totalText.length / simpleData.numpages);
+
+          const startPos = Math.max(0, (range.start - 1) * textPerPage);
+          const endPos = Math.min(totalText.length, range.end * textPerPage);
+
+          if (startPos < endPos) {
+            const rangeText = totalText.substring(startPos, endPos);
+            console.log(`📄 Extracted ${rangeText.length} characters from pages ${range.start}-${range.end}`);
+            console.log(`📋 Sample from range: ${rangeText.substring(0, 100)}...`);
+
+            if (rangeText.trim()) {
               pageInfo.push({
-                page: pageNum,
-                text: pageText,
+                page: range.start,
+                text: rangeText,
               });
-              combinedText += pageText + "\n\n";
+              combinedText += rangeText + "\n\n";
             }
           }
         }
+
+        console.log(`📊 Final combined text length: ${combinedText.length}`);
       }
 
       return { text: combinedText, pageInfo };

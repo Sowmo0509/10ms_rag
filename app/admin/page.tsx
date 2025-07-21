@@ -78,6 +78,42 @@ export default function AdminPage() {
     }
   };
 
+  const recreateIndex = async () => {
+    setIndexStatus("creating");
+    setIngestionStatus((prev) => ({
+      ...prev,
+      progress: "Recreating index with correct dimensions...",
+      error: undefined,
+      success: undefined,
+    }));
+
+    try {
+      const response = await fetch("/api/recreate-index", { method: "POST" });
+      const data = await response.json();
+
+      if (response.ok) {
+        setIndexStatus("exists");
+        setIngestionStatus((prev) => ({
+          ...prev,
+          success: `Index recreated successfully with ${data.dimension} dimensions!`,
+          error: undefined,
+          progress: undefined,
+        }));
+      } else {
+        throw new Error(data.error || "Failed to recreate index");
+      }
+    } catch (error) {
+      console.error("Error recreating index:", error);
+      setIndexStatus("exists"); // Keep as exists since it might still be there
+      setIngestionStatus((prev) => ({
+        ...prev,
+        error: `Failed to recreate index: ${(error as Error).message}`,
+        success: undefined,
+        progress: undefined,
+      }));
+    }
+  };
+
   const addPageRange = () => {
     setPageRanges([...pageRanges, { start: 1, end: 10, description: "" }]);
   };
@@ -210,6 +246,13 @@ export default function AdminPage() {
                   <Button onClick={createIndex} className="flex items-center space-x-2">
                     <Plus className="w-4 h-4" />
                     <span>Create Index</span>
+                  </Button>
+                )}
+
+                {indexStatus === "exists" && (
+                  <Button onClick={recreateIndex} variant="outline" className="flex items-center space-x-2 text-orange-600 border-orange-600 hover:bg-orange-50">
+                    <Database className="w-4 h-4" />
+                    <span>Recreate Index</span>
                   </Button>
                 )}
               </div>
