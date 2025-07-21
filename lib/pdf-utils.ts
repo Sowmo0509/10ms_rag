@@ -87,15 +87,15 @@ export async function extractTextFromPDF(filePath: string, pageRanges?: PageRang
       return { text: combinedText, pageInfo };
     }
 
-    // If simple extraction failed, try custom rendering
-    console.log("⚠️ Simple extraction failed, trying custom page rendering...");
+    // If simple extraction failed, try custom rendering optimized for Bengali
+    console.log("⚠️ Simple extraction failed, trying custom page rendering optimized for Bengali...");
 
-    // Custom render function to extract text with page numbers
+    // Custom render function to extract text with Bengali-aware processing
     const options = {
       pagerender: async (pageData: unknown) => {
         const render_options = {
-          normalizeWhitespace: false,
-          disableCombineTextItems: false,
+          normalizeWhitespace: false, // Keep original whitespace for Bengali
+          disableCombineTextItems: true, // Don't combine text items to preserve Bengali character boundaries
         };
 
         return (pageData as { getTextContent: (opts: unknown) => Promise<{ items: Array<{ str: string; transform: number[] }> }> }).getTextContent(render_options).then((textContent) => {
@@ -103,6 +103,17 @@ export async function extractTextFromPDF(filePath: string, pageRanges?: PageRang
             text = "";
           for (const item of textContent.items) {
             if (lastY == item.transform[5] || !lastY) {
+              // Same line - be more careful about spacing for Bengali text
+              if (text && !text.endsWith(" ") && item.str && !item.str.startsWith(" ")) {
+                // Check if this looks like a continuation of Bengali text
+                const lastChar = text.slice(-1);
+                const firstChar = item.str.charAt(0);
+                const isBengaliContinuation = lastChar.match(/[\u0980-\u09FF]/) && firstChar.match(/[\u0980-\u09FF]/) && !firstChar.match(/[ক-হড়ঢ়য়]/); // Not starting with a consonant
+
+                if (!isBengaliContinuation) {
+                  text += " ";
+                }
+              }
               text += item.str;
             } else {
               text += "\n" + item.str;
@@ -178,8 +189,46 @@ export async function extractTextFromPDF(filePath: string, pageRanges?: PageRang
  * Handles Bengali text preprocessing
  */
 export function cleanText(text: string): string {
+  console.log("🧹 Starting text cleaning...");
+  console.log(`📝 Original text sample: "${text.substring(0, 200)}..."`);
+
+  // First, fix Bengali character fragmentation issues
+  const normalized = text
+    // Fix broken hasanta (virama) - reconnect consonant clusters
+    .replace(/\u09CD\s+/g, "\u09CD") // Remove spaces after hasanta
+    .replace(/([ক-হড়ঢ়য়])\s+\u09CD/g, "$1\u09CD") // Remove spaces before hasanta
+
+    // Fix broken vowel marks (kar) - these should attach to consonants
+    .replace(/\s+\u09BE/g, "\u09BE") // Fix broken aa-kar (া)
+    .replace(/\s+\u09BF/g, "\u09BF") // Fix broken i-kar (ি)
+    .replace(/\s+\u09C0/g, "\u09C0") // Fix broken ii-kar (ী)
+    .replace(/\s+\u09C1/g, "\u09C1") // Fix broken u-kar (ু)
+    .replace(/\s+\u09C2/g, "\u09C2") // Fix broken uu-kar (ূ)
+    .replace(/\s+\u09C7/g, "\u09C7") // Fix broken e-kar (ে)
+    .replace(/\s+\u09C8/g, "\u09C8") // Fix broken oi-kar (ৈ)
+    .replace(/\s+\u09CB/g, "\u09CB") // Fix broken o-kar (ো)
+    .replace(/\s+\u09CC/g, "\u09CC") // Fix broken ou-kar (ৌ)
+    .replace(/\s+\u09D7/g, "\u09D7") // Fix broken au length mark (ৗ)
+
+    // Fix spaces within Bengali conjuncts
+    .replace(/([ক-হড়ঢ়য়])\u09CD\s+([ক-হড়ঢ়য়])/g, "$1\u09CD$2")
+
+    // Fix general spaces between Bengali characters that should be connected
+    .replace(/([ক-হড়ঢ়য়\u09BE-\u09CC])\s+([ক-হড়ঢ়য়\u09BE-\u09CC])/g, function (match, p1, p2) {
+      // Only join if it looks like a broken word (not between actual words)
+      if (p1.match(/[\u09BE-\u09CC]/) || p2.match(/[\u09BE-\u09CC]/)) {
+        return p1 + p2; // Join vowel marks
+      }
+      return match; // Keep space between actual consonants
+    })
+
+    // Normalize Unicode to ensure proper rendering
+    .normalize("NFC");
+
+  console.log(`🔧 After Bengali fixes: "${normalized.substring(0, 200)}..."`);
+
   // Remove excessive whitespace and normalize
-  let cleaned = text
+  let cleaned = normalized
     .replace(/\r\n/g, "\n") // Normalize line endings
     .replace(/\r/g, "\n")
     .replace(/\n{3,}/g, "\n\n") // Limit consecutive newlines
@@ -190,8 +239,12 @@ export function cleanText(text: string): string {
   cleaned = cleaned
     .replace(/[\u200B-\u200D\uFEFF]/g, "") // Remove zero-width characters
     .replace(/\u00A0/g, " ") // Replace non-breaking spaces
-    .replace(/[\u0981\u09BC]/g, "") // Remove certain Bengali diacritics that might cause issues
+    // Keep Bengali nukta (important for some characters)
+    // .replace(/[\u0981\u09BC]/g, "") // Remove certain Bengali diacritics that might cause issues
     .trim();
+
+  console.log(`✅ Final cleaned text sample: "${cleaned.substring(0, 200)}..."`);
+  console.log(`📊 Text length: ${text.length} → ${cleaned.length}`);
 
   return cleaned;
 }

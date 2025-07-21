@@ -30,32 +30,49 @@ function isBengali(text: string): boolean {
  */
 async function retrieveContext(query: string, topK: number = 5): Promise<string[]> {
   try {
+    console.log(`🔍 Retrieving context for query: "${query}"`);
     const indexName = process.env.PINECONE_INDEX!;
     const index = pinecone.index(indexName);
 
     // Create embedding for the query
+    console.log("📊 Creating embedding for query...");
     const queryEmbedding = await openai.embeddings.create({
       model: "text-embedding-ada-002",
       input: query,
     });
+    console.log(`✅ Query embedding created: ${queryEmbedding.data[0].embedding.length} dimensions`);
 
     // Search for similar vectors
+    console.log(`🔎 Searching Pinecone for top ${topK} matches...`);
     const searchResults = await index.query({
       vector: queryEmbedding.data[0].embedding,
       topK,
       includeMetadata: true,
     });
 
-    // Extract content from results
+    console.log(`📋 Search results: ${searchResults.matches?.length || 0} matches found`);
+    if (searchResults.matches && searchResults.matches.length > 0) {
+      console.log(
+        "🎯 Match scores:",
+        searchResults.matches.map((m) => ({ id: m.id, score: m.score }))
+      );
+    }
+
+    // Extract content from results - Lower the threshold to 0.5 for better retrieval
     const contexts =
       searchResults.matches
-        ?.filter((match) => match.score && match.score > 0.7) // Filter by relevance threshold
+        ?.filter((match) => match.score && match.score > 0.5) // Lower threshold for better retrieval
         .map((match) => match.metadata?.content as string)
         .filter((content) => content && content.length > 0) || [];
 
+    console.log(`✅ Retrieved ${contexts.length} relevant contexts`);
+    if (contexts.length > 0) {
+      console.log(`📄 Sample context: "${contexts[0].substring(0, 100)}..."`);
+    }
+
     return contexts;
   } catch (error) {
-    console.error("Error retrieving context:", error);
+    console.error("❌ Error retrieving context:", error);
     return [];
   }
 }
