@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Pinecone } from "@pinecone-database/pinecone";
 import OpenAI from "openai";
-import { processHSC26PDF, PageRange } from "@/lib/pdf-utils";
+import { processHSC26PDFWithOCR as processHSC26PDF, PageRange } from "@/lib/pdf-ocr-utils";
 import { ACTIVE_PAGE_CONFIG } from "@/config/pdf-pages";
 
 const pinecone = new Pinecone({
