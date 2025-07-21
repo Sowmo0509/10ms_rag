@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Pinecone } from "@pinecone-database/pinecone";
 import OpenAI from "openai";
-import { kv } from "@vercel/kv";
 
 const pinecone = new Pinecone({
   apiKey: process.env.PINECONE_API_KEY!,
@@ -68,36 +67,13 @@ function generateSessionId(): string {
   return `chat_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 }
 
-/**
- * Get chat history from KV store
- */
-async function getChatHistory(sessionId: string): Promise<ChatMessage[]> {
-  try {
-    const history = await kv.get(`chat_history:${sessionId}`);
-    return (history as ChatMessage[]) || [];
-  } catch (error) {
-    console.error("Error getting chat history:", error);
-    return [];
-  }
-}
-
-/**
- * Save chat history to KV store
- */
-async function saveChatHistory(sessionId: string, messages: ChatMessage[]): Promise<void> {
-  try {
-    // Keep only last 20 messages to avoid storage limits
-    const limitedMessages = messages.slice(-20);
-    await kv.set(`chat_history:${sessionId}`, limitedMessages, { ex: 86400 }); // 24 hour expiry
-  } catch (error) {
-    console.error("Error saving chat history:", error);
-  }
-}
+// Chat history is now handled on the client side with localStorage
+// No server-side storage needed
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { message, sessionId: providedSessionId } = body;
+    const { message, sessionId: providedSessionId, chatHistory = [] } = body;
 
     if (!message || typeof message !== "string") {
       return NextResponse.json({ error: "Message is required" }, { status: 400 });
@@ -105,9 +81,6 @@ export async function POST(req: NextRequest) {
 
     // Generate or use provided session ID
     const sessionId = providedSessionId || generateSessionId();
-
-    // Get chat history
-    const chatHistory = await getChatHistory(sessionId);
 
     // Detect language
     const isUserBengali = isBengali(message);
@@ -124,7 +97,7 @@ export async function POST(req: NextRequest) {
     // Prepare messages for OpenAI
     const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
       { role: "system", content: systemPrompt },
-      ...chatHistory.slice(-10).map((msg) => ({ role: msg.role, content: msg.content })), // Include recent history
+      ...chatHistory.slice(-10).map((msg: ChatMessage) => ({ role: msg.role, content: msg.content })), // Include recent history
       { role: "user", content: `${contextString}Question: ${message}` },
     ];
 
@@ -165,10 +138,8 @@ export async function POST(req: NextRequest) {
             timestamp: Date.now(),
           };
 
-          const updatedHistory = [...chatHistory, userMessage, assistantMessage];
-          await saveChatHistory(sessionId, updatedHistory);
-
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ done: true, sessionId })}\n\n`));
+          // Chat history is now managed on the client side
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ done: true, sessionId, userMessage, assistantMessage })}\n\n`));
           controller.close();
         } catch (error) {
           console.error("Streaming error:", error);
@@ -192,15 +163,8 @@ export async function POST(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
-    const { searchParams } = new URL(req.url);
-    const sessionId = searchParams.get("sessionId");
-
-    if (!sessionId) {
-      return NextResponse.json({ error: "Session ID is required" }, { status: 400 });
-    }
-
-    await kv.del(`chat_history:${sessionId}`);
-
+    // Chat history is now managed on the client side with localStorage
+    // This endpoint is kept for API compatibility but doesn't do server-side cleanup
     return NextResponse.json({ message: "Chat history cleared successfully" });
   } catch (error) {
     console.error("Error clearing chat history:", error);
