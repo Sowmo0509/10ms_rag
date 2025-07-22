@@ -16,6 +16,170 @@ interface ChatMessage {
   timestamp: number;
 }
 
+interface RAGEvaluation {
+  groundedness: {
+    score: number;
+    explanation: string;
+    supportingEvidence: string[];
+  };
+  relevance: {
+    score: number;
+    explanation: string;
+    topScores: number[];
+    averageScore: number;
+  };
+  contextUsed: string[];
+  retrievalMetrics: {
+    totalRetrieved: number;
+    aboveThreshold: number;
+    averageSimilarity: number;
+  };
+}
+
+/**
+ * Calculate cosine similarity between two vectors
+ */
+function cosineSimilarity(a: number[], b: number[]): number {
+  if (a.length !== b.length) return 0;
+  
+  const dotProduct = a.reduce((sum, val, i) => sum + val * b[i], 0);
+  const magnitudeA = Math.sqrt(a.reduce((sum, val) => sum + val * val, 0));
+  const magnitudeB = Math.sqrt(b.reduce((sum, val) => sum + val * val, 0));
+  
+  if (magnitudeA === 0 || magnitudeB === 0) return 0;
+  
+  return dotProduct / (magnitudeA * magnitudeB);
+}
+
+/**
+ * Evaluate groundedness: How well is the answer supported by the retrieved context?
+ */
+async function evaluateGroundedness(answer: string, contexts: string[]): Promise<{
+  score: number;
+  explanation: string;
+  supportingEvidence: string[];
+}> {
+  if (contexts.length === 0) {
+    return {
+      score: 0,
+      explanation: "No context retrieved to support the answer",
+      supportingEvidence: []
+    };
+  }
+
+  try {
+    // Create embeddings for answer and contexts
+    const answerEmbedding = await openai.embeddings.create({
+      model: "text-embedding-ada-002",
+      input: answer,
+    });
+
+    const contextEmbeddings = await Promise.all(
+      contexts.map(context => 
+        openai.embeddings.create({
+          model: "text-embedding-ada-002",
+          input: context,
+        })
+      )
+    );
+
+    // Calculate similarity scores between answer and each context
+    const similarities = contextEmbeddings.map(contextEmb => 
+      cosineSimilarity(answerEmbedding.data[0].embedding, contextEmb.data[0].embedding)
+    );
+
+    // Find the best supporting contexts (similarity > 0.7)
+    const supportingEvidence: string[] = [];
+    const highSimilarityIndices = similarities
+      .map((sim, idx) => ({ sim, idx }))
+      .filter(item => item.sim > 0.7)
+      .sort((a, b) => b.sim - a.sim)
+      .slice(0, 3); // Top 3 supporting contexts
+
+    highSimilarityIndices.forEach(item => {
+      supportingEvidence.push(contexts[item.idx].substring(0, 200) + "...");
+    });
+
+    // Calculate overall groundedness score
+    const maxSimilarity = Math.max(...similarities);
+    const avgTopSimilarities = similarities
+      .sort((a, b) => b - a)
+      .slice(0, Math.min(3, similarities.length))
+      .reduce((sum, sim) => sum + sim, 0) / Math.min(3, similarities.length);
+
+    const groundednessScore = Math.min(1, avgTopSimilarities * 1.2); // Boost good scores slightly
+
+    let explanation = "";
+    if (groundednessScore >= 0.8) {
+      explanation = "Excellent: Answer is strongly supported by retrieved context";
+    } else if (groundednessScore >= 0.6) {
+      explanation = "Good: Answer has reasonable support from context";
+    } else if (groundednessScore >= 0.4) {
+      explanation = "Fair: Answer has some support but may include unsupported information";
+    } else {
+      explanation = "Poor: Answer appears to have limited support from retrieved context";
+    }
+
+    return {
+      score: Math.round(groundednessScore * 100) / 100,
+      explanation,
+      supportingEvidence
+    };
+
+  } catch (error) {
+    console.error("Error evaluating groundedness:", error);
+    return {
+      score: 0,
+      explanation: "Error calculating groundedness score",
+      supportingEvidence: []
+    };
+  }
+}
+
+/**
+ * Evaluate relevance: How well do the retrieved documents match the query?
+ */
+function evaluateRelevance(searchScores: number[]): {
+  score: number;
+  explanation: string;
+  topScores: number[];
+  averageScore: number;
+} {
+  if (searchScores.length === 0) {
+    return {
+      score: 0,
+      explanation: "No documents retrieved",
+      topScores: [],
+      averageScore: 0
+    };
+  }
+
+  const topScores = searchScores.slice(0, 5); // Top 5 scores
+  const averageScore = searchScores.reduce((sum, score) => sum + score, 0) / searchScores.length;
+  const topAverage = topScores.reduce((sum, score) => sum + score, 0) / topScores.length;
+
+  // Relevance score based on top results
+  const relevanceScore = Math.min(1, topAverage * 1.1); // Slight boost for good retrieval
+
+  let explanation = "";
+  if (relevanceScore >= 0.8) {
+    explanation = "Excellent: Retrieved documents are highly relevant to the query";
+  } else if (relevanceScore >= 0.6) {
+    explanation = "Good: Retrieved documents are reasonably relevant";
+  } else if (relevanceScore >= 0.4) {
+    explanation = "Fair: Some retrieved documents are relevant but quality varies";
+  } else {
+    explanation = "Poor: Retrieved documents have low relevance to the query";
+  }
+
+  return {
+    score: Math.round(relevanceScore * 100) / 100,
+    explanation,
+    topScores: topScores.map(score => Math.round(score * 100) / 100),
+    averageScore: Math.round(averageScore * 100) / 100
+  };
+}
+
 /**
  * Detect if text is primarily Bengali
  */
@@ -28,7 +192,15 @@ function isBengali(text: string): boolean {
 /**
  * Retrieve relevant context from Pinecone with keyword fallback for Bengali
  */
-async function retrieveContext(query: string, topK: number = 10): Promise<string[]> {
+async function retrieveContext(query: string, topK: number = 10): Promise<{
+  contexts: string[];
+  searchScores: number[];
+  retrievalMetrics: {
+    totalRetrieved: number;
+    aboveThreshold: number;
+    averageSimilarity: number;
+  };
+}> {
   try {
     console.log(`🔍 Retrieving context for query: "${query}"`);
     const indexName = process.env.PINECONE_INDEX!;
@@ -51,6 +223,9 @@ async function retrieveContext(query: string, topK: number = 10): Promise<string
     });
 
     console.log(`📋 Search results: ${searchResults.matches?.length || 0} matches found`);
+    
+    const allScores = searchResults.matches?.map(m => m.score || 0) || [];
+    
     if (searchResults.matches && searchResults.matches.length > 0) {
       console.log(
         "🎯 Match scores:",
@@ -64,6 +239,10 @@ async function retrieveContext(query: string, topK: number = 10): Promise<string
         ?.filter((match) => match.score && match.score > 0.1) // Very low threshold for Bengali text
         .map((match) => match.metadata?.content as string)
         .filter((content) => content && content.length > 0) || [];
+
+    const relevantScores = searchResults.matches
+      ?.filter((match) => match.score && match.score > 0.1)
+      .map(match => match.score || 0) || [];
 
     console.log(`✅ Retrieved ${contexts.length} relevant contexts using semantic search`);
 
@@ -88,13 +267,21 @@ async function retrieveContext(query: string, topK: number = 10): Promise<string
       if (keywordMatches.length > 0) {
         console.log(`🎯 Found ${keywordMatches.length} keyword matches`);
         const keywordContexts = keywordMatches.map((match) => match.metadata?.content as string).filter((content) => content && content.length > 0);
+        const keywordScores = keywordMatches.map(match => match.score || 0);
 
         // Merge with semantic results, removing duplicates
         const allContexts = [...contexts, ...keywordContexts];
         contexts = Array.from(new Set(allContexts)); // Remove duplicates
+        relevantScores.push(...keywordScores);
         console.log(`✅ Combined contexts: ${contexts.length} total`);
       }
     }
+
+    // Calculate retrieval metrics
+    const totalRetrieved = searchResults.matches?.length || 0;
+    const aboveThreshold = contexts.length;
+    const averageSimilarity = allScores.length > 0 ? 
+      allScores.reduce((sum, score) => sum + score, 0) / allScores.length : 0;
 
     if (contexts.length > 0) {
       console.log(`📄 Sample context: "${contexts[0].substring(0, 100)}..."`);
@@ -109,10 +296,26 @@ async function retrieveContext(query: string, topK: number = 10): Promise<string
       });
     }
 
-    return contexts;
+    return {
+      contexts,
+      searchScores: relevantScores,
+      retrievalMetrics: {
+        totalRetrieved,
+        aboveThreshold,
+        averageSimilarity: Math.round(averageSimilarity * 100) / 100
+      }
+    };
   } catch (error) {
     console.error("❌ Error retrieving context:", error);
-    return [];
+    return {
+      contexts: [],
+      searchScores: [],
+      retrievalMetrics: {
+        totalRetrieved: 0,
+        aboveThreshold: 0,
+        averageSimilarity: 0
+      }
+    };
   }
 }
 
@@ -141,8 +344,8 @@ export async function POST(req: NextRequest) {
     // Detect language
     const isUserBengali = isBengali(message);
 
-    // Retrieve relevant context
-    const contexts = await retrieveContext(message);
+    // Retrieve relevant context with evaluation metrics
+    const { contexts, searchScores, retrievalMetrics } = await retrieveContext(message);
 
     // Prepare system prompt based on language
     const systemPrompt = isUserBengali ? `আপনি একটি সহায়ক AI সহায়ক। আপনাকে দেওয়া প্রসঙ্গের ভিত্তিতে প্রশ্নের উত্তর দিন। যদি প্রসঙ্গে উত্তর না থাকে, তাহলে বিনয়ের সাথে বলুন যে আপনি জানেন না। সবসময় বাংলায় উত্তর দিন।` : `You are a helpful AI assistant. Answer questions based on the provided context. If the answer is not in the context, politely say you don't know. Always respond in English.`;
@@ -181,6 +384,28 @@ export async function POST(req: NextRequest) {
             }
           }
 
+          // Evaluate the RAG system performance
+          console.log("🔬 Starting RAG evaluation...");
+          
+          // Evaluate groundedness
+          const groundednessEval = await evaluateGroundedness(fullResponse, contexts);
+          
+          // Evaluate relevance
+          const relevanceEval = evaluateRelevance(searchScores);
+          
+          const ragEvaluation: RAGEvaluation = {
+            groundedness: groundednessEval,
+            relevance: relevanceEval,
+            contextUsed: contexts.map(c => c.substring(0, 150) + "..."),
+            retrievalMetrics
+          };
+
+          console.log("📊 RAG Evaluation Results:", {
+            groundedness: ragEvaluation.groundedness.score,
+            relevance: ragEvaluation.relevance.score,
+            totalContexts: contexts.length
+          });
+
           // Save to chat history
           const userMessage: ChatMessage = {
             role: "user",
@@ -195,7 +420,13 @@ export async function POST(req: NextRequest) {
           };
 
           // Chat history is now managed on the client side
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ done: true, sessionId, userMessage, assistantMessage })}\n\n`));
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ 
+            done: true, 
+            sessionId, 
+            userMessage, 
+            assistantMessage,
+            ragEvaluation 
+          })}\n\n`));
           controller.close();
         } catch (error) {
           console.error("Streaming error:", error);
