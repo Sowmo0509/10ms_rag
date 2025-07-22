@@ -236,56 +236,106 @@ export function cleanBengaliText(text: string): string {
 }
 
 /**
- * Split text into chunks - one line per chunk for better granularity
+ * Split text into chunks with proper chunk size and overlap for better context
  */
 export function chunkTextWithPages(text: string, pageInfo: Array<{ page: number; text: string }>, chunkSize: number = 1000, overlap: number = 200): DocumentChunk[] {
-  console.log("🔄 Starting text chunking (one line per chunk)...");
+  console.log("🔄 Starting text chunking with proper chunk size and overlap...");
   console.log(`Input text length: ${text.length}`);
   console.log(`Page info count: ${pageInfo.length}`);
+  console.log(`Chunk size: ${chunkSize}, overlap: ${overlap}`);
 
   const cleanedText = cleanBengaliText(text);
   console.log(`Cleaned text length: ${cleanedText.length}`);
 
   const chunks: DocumentChunk[] = [];
+
+  // Split by sentences first (looking for Bengali and English sentence endings)
+  const sentences = cleanedText.split(/(?<=[।.!?])\s+/);
+  console.log(`Split into ${sentences.length} sentences`);
+
+  let currentChunk = "";
   let chunkIndex = 0;
+  let currentPageNumbers: number[] = [];
 
-  // Process each page separately to maintain page association
+  // Create a mapping of text positions to page numbers (simplified approach)
+  const textToPageMap = new Map<string, number>();
   for (const pageData of pageInfo) {
-    const pageText = cleanBengaliText(pageData.text);
+    const cleanPageText = cleanBengaliText(pageData.text);
+    if (cleanPageText.trim()) {
+      textToPageMap.set(cleanPageText.substring(0, 100), pageData.page); // Use first 100 chars as key
+    }
+  }
 
-    // Split by line breaks to create one chunk per line
-    const lines = pageText.split(/\n+/).filter((line) => line.trim().length > 0);
-    console.log(`Page ${pageData.page}: ${lines.length} lines found`);
+  for (let i = 0; i < sentences.length; i++) {
+    const sentence = sentences[i].trim();
 
-    for (const line of lines) {
-      const trimmedLine = line.trim();
+    // Try to determine which page this sentence belongs to
+    let sentencePage: number | undefined;
+    for (const [pageText, pageNum] of textToPageMap.entries()) {
+      if (pageText.includes(sentence.substring(0, 50))) {
+        sentencePage = pageNum;
+        break;
+      }
+    }
 
-      // Only create chunks for lines with meaningful content (at least 10 characters)
-      if (trimmedLine.length >= 10) {
+    // If adding this sentence would exceed chunk size, finalize current chunk
+    if (currentChunk.length + sentence.length > chunkSize && currentChunk.length > 0) {
+      if (currentChunk.trim()) {
         chunks.push({
-          content: trimmedLine,
+          content: currentChunk.trim(),
           metadata: {
             source: "hsc26.pdf",
-            page: pageData.page,
-            chunk_index: chunkIndex++,
-            char_count: trimmedLine.length,
+            page: currentPageNumbers.length > 0 ? Math.min(...currentPageNumbers) : undefined,
+            chunk_index: chunkIndex,
+            char_count: currentChunk.trim().length,
           },
         });
+        chunkIndex++;
+      }
+
+      // Start new chunk with overlap from previous chunk
+      const words = currentChunk.trim().split(/\s+/);
+      const overlapWords = words.slice(-Math.floor(overlap / 6)); // Approximate word count for overlap
+      currentChunk = overlapWords.join(" ") + " " + sentence;
+      currentPageNumbers = sentencePage ? [sentencePage] : [];
+    } else {
+      currentChunk += (currentChunk ? " " : "") + sentence;
+      if (sentencePage && !currentPageNumbers.includes(sentencePage)) {
+        currentPageNumbers.push(sentencePage);
       }
     }
   }
 
-  console.log(`📊 Total chunks created: ${chunks.length}`);
-  console.log(`📊 Chunks per page: ${Math.round(chunks.length / pageInfo.length)} average`);
-
-  if (chunks.length > 0) {
-    console.log(`📋 Sample chunk: "${chunks[0].content.substring(0, 100)}..."`);
-    console.log(`📋 Average chunk size: ${Math.round(chunks.reduce((sum, chunk) => sum + chunk.metadata.char_count, 0) / chunks.length)} characters`);
-  } else {
-    console.log("❌ No chunks created");
+  // Add the last chunk if it has content
+  if (currentChunk.trim()) {
+    chunks.push({
+      content: currentChunk.trim(),
+      metadata: {
+        source: "hsc26.pdf",
+        page: currentPageNumbers.length > 0 ? Math.min(...currentPageNumbers) : undefined,
+        chunk_index: chunkIndex,
+        char_count: currentChunk.trim().length,
+      },
+    });
   }
 
-  return chunks;
+  // Filter out very short chunks (less than 50 characters)
+  console.log(`📊 Before filtering: ${chunks.length} chunks`);
+  const filteredChunks = chunks.filter((chunk) => chunk.content.length >= 50);
+  console.log(`📊 After filtering (>= 50 chars): ${filteredChunks.length} chunks`);
+
+  if (filteredChunks.length > 0) {
+    console.log(`📋 Sample chunk: "${filteredChunks[0].content.substring(0, 100)}..."`);
+    console.log(`📋 Average chunk size: ${Math.round(filteredChunks.reduce((sum, chunk) => sum + chunk.metadata.char_count, 0) / filteredChunks.length)} characters`);
+  } else {
+    console.log("❌ No chunks remain after filtering");
+    console.log(
+      "Original chunks before filtering:",
+      chunks.map((c) => ({ length: c.content.length, preview: c.content.substring(0, 50) }))
+    );
+  }
+
+  return filteredChunks;
 }
 
 /**
