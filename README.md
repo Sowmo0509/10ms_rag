@@ -338,7 +338,7 @@ the main character gains deeper insights into human nature and societal expectat
 
 ## Q: What method or library did you use to extract the text, and why? Did you face any formatting challenges with the PDF content?
 
-**Answer:** We implemented a OCR-first text extraction system:
+**Answer:** I implemented a OCR-first text extraction system:
 
 1. **Primary Method - Tesseract.js OCR:**
 
@@ -379,7 +379,7 @@ the main character gains deeper insights into human nature and societal expectat
 
 ## Q: What chunking strategy did you choose (e.g. paragraph-based, sentence-based, character limit)? Why do you think it works well for semantic retrieval?
 
-**Answer:** We implemented a **sentence-based chunking strategy** with the following characteristics:
+**Answer:** I implemented a **sentence-based chunking strategy** with the following characteristics:
 
 **Strategy Details:**
 
@@ -413,9 +413,9 @@ if (currentChunk.length + sentence.length > chunkSize && currentChunk.length > 0
 
 ## Q: What embedding model did you use? Why did you choose it? How does it capture the meaning of the text?
 
-**Answer:** We use **OpenAI's text-embedding-ada-002** model.
+**Answer:** I use **OpenAI's text-embedding-ada-002** model.
 
-**Why We Chose It:**
+**Why I Chose It:**
 
 1. **Multilingual Support:** Excellent performance on Bengali and English text
 2. **High Dimensionality:** 1536 dimensions provide rich semantic representation
@@ -570,7 +570,7 @@ const systemPrompt = isUserBengali ? `আপনাকে দেওয়া প�
 
 **Current Result Quality Assessment:**
 
-Based on our evaluation metrics and testing:
+Based on my evaluation metrics and testing:
 
 **Strengths:**
 
