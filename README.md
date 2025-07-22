@@ -5,7 +5,7 @@ A high-performance Retrieval-Augmented Generation (RAG) system optimized for Ben
 ## 🚀 Features
 
 - **Bilingual Support**: Query in Bengali or English, get responses in the appropriate language
-- **Advanced Text Extraction**: Dual approach using pdf-parse and Tesseract.js OCR for Bengali text
+- **Advanced Text Extraction**: Primary OCR-based extraction using Tesseract.js for Bengali text recognition
 - **Smart Chunking**: Sentence-based chunking optimized for Bengali text boundaries
 - **RAG Evaluation**: Built-in groundedness and relevance evaluation metrics
 - **Real-time Chat**: Streaming responses with conversation history
@@ -85,13 +85,13 @@ npm run dev
 | **Next.js**      | 15.4.2  | React framework for full-stack application                              |
 | **OpenAI**       | ^5.10.1 | GPT-4o-mini for chat completion & text-embedding-ada-002 for embeddings |
 | **Pinecone**     | ^6.1.1  | Vector database for semantic search                                     |
-| **pdf-parse**    | ^1.1.1  | Primary PDF text extraction                                             |
-| **Tesseract.js** | ^4.1.4  | OCR engine for Bengali text recognition                                 |
+| **Tesseract.js** | ^4.1.4  | Primary OCR engine for Bengali text recognition                         |
+| **pdf-parse**    | ^1.1.1  | PDF text extraction (fallback method)                                   |
 | **pdf2pic**      | ^3.2.0  | PDF to image conversion for OCR                                         |
 
 ### UI & Styling
 
-| Package                      | Purpose  |
+| Package                      | Version  | Purpose                     |
 | ---------------------------- | -------- | --------------------------- |
 | **Tailwind CSS**             | ^4       | Utility-first CSS framework |
 | **Radix UI**                 | ^1.2.3   | Accessible UI components    |
@@ -100,7 +100,7 @@ npm run dev
 
 ### Development Tools
 
-| Package        | Purpose |
+| Package        | Version | Purpose                                       |
 | -------------- | ------- | --------------------------------------------- |
 | **TypeScript** | ^5      | Type safety and better development experience |
 | **ESLint**     | ^9      | Code linting and formatting                   |
@@ -308,8 +308,8 @@ the main character gains deeper insights into human nature and societal expectat
 ```
 ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
 │   PDF Document  │───▶│  Text Extraction │───▶│   Text Chunks   │
-│   (Bengali)     │    │  (pdf-parse +    │    │  (Sentence-     │
-│                 │    │   Tesseract OCR) │    │   based)        │
+│   (Bengali)     │    │  (Tesseract OCR  │    │  (Sentence-     │
+│                 │    │   Primary)       │    │   based)        │
 └─────────────────┘    └──────────────────┘    └─────────────────┘
                                 │                        │
                                 ▼                        ▼
@@ -336,22 +336,20 @@ the main character gains deeper insights into human nature and societal expectat
 
 ## 🔬 Technical Deep Dive
 
-### Text Extraction Methods
+## Q: What method or library did you use to extract the text, and why? Did you face any formatting challenges with the PDF content?
 
-**Q: What method or library did you use to extract the text, and why? Did you face any formatting challenges with the PDF content?**
+**Answer:** We implemented a OCR-first text extraction system:
 
-**Answer:** We implemented a dual-approach text extraction system:
+1. **Primary Method - Tesseract.js OCR:**
 
-1. **Primary Method - pdf-parse Library:**
-
-   - **Why chosen:** Fast, efficient, and works well for text-based PDFs
-   - **Implementation:** Direct text extraction with custom page rendering for Bengali
-   - **Advantages:** Preserves text structure and is computationally efficient
-
-2. **Fallback Method - Tesseract.js OCR:**
-   - **Why chosen:** Handles scanned PDFs and images with Bengali language support
+   - **Why chosen:** Excellent Bengali language support and handles all PDF types (text-based and scanned)
    - **Implementation:** PDF → Images → OCR with 'ben+eng' language models
-   - **Advantages:** Works with any PDF type, excellent Bengali character recognition
+   - **Advantages:** Works with any PDF type, superior Bengali character recognition, handles complex layouts
+
+2. **Fallback Method - pdf-parse Library (when needed):**
+   - **Why available:** Fast extraction for simple text-based PDFs
+   - **Implementation:** Direct text extraction with custom page rendering
+   - **Usage:** Rarely used as OCR provides better results for Bengali content
 
 **Formatting Challenges Faced:**
 
@@ -379,9 +377,7 @@ the main character gains deeper insights into human nature and societal expectat
    - Implemented specialized regex patterns to reconnect them
    - Added logic to distinguish between actual word boundaries and OCR artifacts
 
-### Chunking Strategy
-
-**Q: What chunking strategy did you choose (e.g. paragraph-based, sentence-based, character limit)? Why do you think it works well for semantic retrieval?**
+## Q: What chunking strategy did you choose (e.g. paragraph-based, sentence-based, character limit)? Why do you think it works well for semantic retrieval?
 
 **Answer:** We implemented a **sentence-based chunking strategy** with the following characteristics:
 
@@ -415,9 +411,7 @@ if (currentChunk.length + sentence.length > chunkSize && currentChunk.length > 0
 4. **Flexible Size:** 1000-character limit balances detail with search efficiency
 5. **Bengali Optimization:** Handles Bengali text structure and conjunct characters properly
 
-### Embedding Model
-
-**Q: What embedding model did you use? Why did you choose it? How does it capture the meaning of the text?**
+## Q: What embedding model did you use? Why did you choose it? How does it capture the meaning of the text?
 
 **Answer:** We use **OpenAI's text-embedding-ada-002** model.
 
@@ -446,9 +440,7 @@ const embedding = await openai.embeddings.create({
 // Returns 1536-dimensional vector representing semantic meaning
 ```
 
-### Similarity Comparison and Storage
-
-**Q: How are you comparing the query with your stored chunks? Why did you choose this similarity method and storage setup?**
+## Q: How are you comparing the query with your stored chunks? Why did you choose this similarity method and storage setup?
 
 **Answer:**
 
@@ -504,9 +496,7 @@ function cosineSimilarity(a: number[], b: number[]): number {
 4. Filter results above threshold (0.1 for Bengali optimization)
 5. Return relevant contexts for answer generation
 
-### Meaningful Comparison and Vague Query Handling
-
-**Q: How do you ensure that the question and the document chunks are compared meaningfully? What would happen if the query is vague or missing context?**
+## Q: How do you ensure that the question and the document chunks are compared meaningfully? What would happen if the query is vague or missing context?
 
 **Answer:**
 
@@ -574,9 +564,7 @@ const systemPrompt = isUserBengali ? `আপনাকে দেওয়া প�
    - Provide context about available topics
    - Guide users toward successful queries
 
-### Result Quality and Improvement Strategies
-
-**Q: Do the results seem relevant? If not, what might improve them (e.g. better chunking, better embedding model, larger document)?**
+## Q: Do the results seem relevant? If not, what might improve them (e.g. better chunking, better embedding model, larger document)?
 
 **Answer:**
 
@@ -660,31 +648,6 @@ const hybridRetrieval = {
 - **User Feedback:** Collect feedback to identify problem areas
 - **A/B Testing:** Test different chunking and retrieval strategies
 - **Quality Metrics:** Track answer quality over time
-
-## 🚀 Production Deployment
-
-For production deployment:
-
-1. **Environment Setup:**
-
-   - Use production-grade Pinecone index
-   - Set up proper environment variables
-   - Configure CORS and security headers
-
-2. **Performance Optimization:**
-
-   - Implement caching for frequent queries
-   - Use CDN for static assets
-   - Optimize chunk sizes based on usage patterns
-
-3. **Monitoring:**
-   - Set up logging and analytics
-   - Monitor evaluation metrics
-   - Track system performance and errors
-
-## 📝 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
 
 ## 🤝 Contributing
 
