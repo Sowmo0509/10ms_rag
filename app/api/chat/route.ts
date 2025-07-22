@@ -26,9 +26,9 @@ function isBengali(text: string): boolean {
 }
 
 /**
- * Retrieve relevant context from Pinecone
+ * Retrieve relevant context from Pinecone with keyword fallback for Bengali
  */
-async function retrieveContext(query: string, topK: number = 5): Promise<string[]> {
+async function retrieveContext(query: string, topK: number = 10): Promise<string[]> {
   try {
     console.log(`🔍 Retrieving context for query: "${query}"`);
     const indexName = process.env.PINECONE_INDEX!;
@@ -58,16 +58,55 @@ async function retrieveContext(query: string, topK: number = 5): Promise<string[
       );
     }
 
-    // Extract content from results - Lower the threshold to 0.5 for better retrieval
-    const contexts =
+    // Extract content from results - Very low threshold for Bengali text + detailed logging
+    let contexts =
       searchResults.matches
-        ?.filter((match) => match.score && match.score > 0.5) // Lower threshold for better retrieval
+        ?.filter((match) => match.score && match.score > 0.1) // Very low threshold for Bengali text
         .map((match) => match.metadata?.content as string)
         .filter((content) => content && content.length > 0) || [];
 
-    console.log(`✅ Retrieved ${contexts.length} relevant contexts`);
+    console.log(`✅ Retrieved ${contexts.length} relevant contexts using semantic search`);
+
+    // If no contexts found or very few, try keyword-based fallback for Bengali queries
+    if (contexts.length < 2 && isBengali(query)) {
+      console.log("🔄 Trying keyword-based fallback for Bengali query...");
+
+      // Extract key Bengali words from the query
+      const bengaliWords = query.match(/[\u0980-\u09FF]+/g) || [];
+      console.log(`🔤 Bengali keywords found: ${bengaliWords.join(", ")}`);
+
+      // Get all matches and search for keyword matches
+      const allMatches = searchResults.matches || [];
+      const keywordMatches = allMatches.filter((match) => {
+        const content = match.metadata?.content as string;
+        if (!content) return false;
+
+        // Check if any Bengali keyword appears in the content
+        return bengaliWords.some((word) => content.includes(word));
+      });
+
+      if (keywordMatches.length > 0) {
+        console.log(`🎯 Found ${keywordMatches.length} keyword matches`);
+        const keywordContexts = keywordMatches.map((match) => match.metadata?.content as string).filter((content) => content && content.length > 0);
+
+        // Merge with semantic results, removing duplicates
+        const allContexts = [...contexts, ...keywordContexts];
+        contexts = Array.from(new Set(allContexts)); // Remove duplicates
+        console.log(`✅ Combined contexts: ${contexts.length} total`);
+      }
+    }
+
     if (contexts.length > 0) {
       console.log(`📄 Sample context: "${contexts[0].substring(0, 100)}..."`);
+      // Log all retrieved contexts for debugging
+      contexts.forEach((context, index) => {
+        console.log(`📄 Context ${index + 1}: "${context.substring(0, 150)}..."`);
+      });
+    } else {
+      console.log("❌ No contexts retrieved - showing all matches for debugging:");
+      searchResults.matches?.forEach((match, index) => {
+        console.log(`🔍 Match ${index + 1}: score=${match.score}, content="${(match.metadata?.content as string)?.substring(0, 100)}..."`);
+      });
     }
 
     return contexts;
