@@ -650,4 +650,4 @@ const hybridRetrieval = {
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are not welcome! This is as assignment intended for 10 Minute School.
