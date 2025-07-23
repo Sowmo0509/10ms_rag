@@ -1,5 +1,9 @@
 # 10ms RAG - Bengali Document RAG System
 
+## [🔗 Chat on Live Project](https://10ms-rag.vercel.app/)
+
+![Preview](hero.png)
+
 A high-performance Retrieval-Augmented Generation (RAG) system optimized for Bengali language documents with comprehensive evaluation metrics. This system processes Bengali PDF documents using both traditional PDF parsing and OCR techniques, stores them in a vector database, and provides intelligent question-answering capabilities.
 
 ## 🚀 Features
