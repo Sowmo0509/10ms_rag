@@ -257,7 +257,6 @@ the main character gains deeper insights into human nature and societal expectat
 
 - **POST** `/api/create-index` - Create Pinecone index
 - **POST** `/api/recreate-index` - Recreate index with correct dimensions
-- **POST** `/api/test-ocr` - Test OCR functionality
 
 ## 📊 Evaluation Metrics
 

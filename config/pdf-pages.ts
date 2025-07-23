@@ -1,4 +1,4 @@
-import { PageRange } from "@/lib/pdf-utils";
+import { PageRange } from "@/lib/pdf-ocr-utils";
 
 /**
  * Configuration for HSC26 PDF page extraction
