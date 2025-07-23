@@ -94,7 +94,7 @@ npm run dev
 | Package                      | Version  | Purpose                     |
 | ---------------------------- | -------- | --------------------------- |
 | **Tailwind CSS**             | ^4       | Utility-first CSS framework |
-| **Radix UI**                 | ^1.2.3   | Accessible UI components    |
+| **shadcn/ui**                |          | Accessible UI components    |
 | **Lucide React**             | ^0.525.0 | Icon library                |
 | **class-variance-authority** | ^0.7.1   | Conditional CSS classes     |
 
