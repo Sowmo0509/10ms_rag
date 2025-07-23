@@ -1,29 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Pinecone } from "@pinecone-database/pinecone";
-import OpenAI from "openai";
-import { processHSC26PDFWithOCR as processHSC26PDF, PageRange } from "@/lib/pdf-ocr-utils";
+import { PineconeService, PineconeVector } from "@/lib/services/pinecone.service";
+import { OpenAIService } from "@/lib/services/openai.service";
+import { APIErrorHandler, Logger } from "@/lib/utils/error-handling.utils";
+import { PDFProcessorService } from "@/lib/services/pdf-processor.service";
+import { PageRange, DocumentChunk } from "@/lib/types/pdf-processing.types";
 import { ACTIVE_PAGE_CONFIG } from "@/config/pdf-pages";
 
-const pinecone = new Pinecone({
-  apiKey: process.env.PINECONE_API_KEY!,
-});
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY!,
-});
+const pineconeService = new PineconeService();
+const openaiService = new OpenAIService();
 
 export async function POST(req: NextRequest) {
-  console.log("=== INGESTION API CALLED ===");
+  Logger.info("=== INGESTION API CALLED ===");
 
   try {
+    // Environment validation
     const indexName = process.env.PINECONE_INDEX;
-    console.log("Environment check - PINECONE_INDEX:", indexName ? "✓ Set" : "✗ Missing");
-    console.log("Environment check - OPENAI_API_KEY:", process.env.OPENAI_API_KEY ? "✓ Set" : "✗ Missing");
-    console.log("Environment check - PINECONE_API_KEY:", process.env.PINECONE_API_KEY ? "✓ Set" : "✗ Missing");
+    Logger.info("Environment check - PINECONE_INDEX:", indexName ? "✓ Set" : "✗ Missing");
+    Logger.info("Environment check - OPENAI_API_KEY:", process.env.OPENAI_API_KEY ? "✓ Set" : "✗ Missing");
+    Logger.info("Environment check - PINECONE_API_KEY:", process.env.PINECONE_API_KEY ? "✓ Set" : "✗ Missing");
 
     if (!indexName) {
-      console.error("PINECONE_INDEX environment variable is not set");
-      return NextResponse.json({ error: "PINECONE_INDEX environment variable is not set" }, { status: 500 });
+      return APIErrorHandler.handleMissingEnvironmentVariable("PINECONE_INDEX");
     }
 
     // Parse request body for optional page ranges, or use config file
@@ -31,96 +28,62 @@ export async function POST(req: NextRequest) {
     try {
       const body = await req.json();
       pageRanges = body.pageRanges || (ACTIVE_PAGE_CONFIG.length > 0 ? ACTIVE_PAGE_CONFIG : undefined);
-      console.log("Request body parsed successfully");
+      Logger.info("Request body parsed successfully");
     } catch (error) {
       // If no body or invalid JSON, use config file or all pages
       pageRanges = ACTIVE_PAGE_CONFIG.length > 0 ? ACTIVE_PAGE_CONFIG : undefined;
-      console.log("No request body, using config file or all pages");
+      Logger.info("No request body, using config file or all pages");
     }
 
-    console.log("Page ranges configuration:", pageRanges || "All pages");
+    Logger.info("Page ranges configuration:", pageRanges || "All pages");
 
     // Check if index exists
-    console.log("Checking if Pinecone index exists...");
-    try {
-      const existingIndexes = await pinecone.listIndexes();
-      const indexExists = existingIndexes.indexes?.some((index) => index.name === indexName);
-      console.log("Index check result:", indexExists ? "✓ Exists" : "✗ Not found");
+    Logger.info("Checking if Pinecone index exists...");
+    const indexExists = await pineconeService.checkIndexExists();
+    Logger.info("Index check result:", indexExists ? "✓ Exists" : "✗ Not found");
 
-      if (!indexExists) {
-        console.error(`Index "${indexName}" does not exist`);
-        return NextResponse.json({ error: `Index "${indexName}" does not exist. Please create it first using /api/create-index` }, { status: 400 });
-      }
-    } catch (indexError) {
-      console.error("Error checking Pinecone index:", indexError);
-      return NextResponse.json({ error: `Failed to check Pinecone index: ${(indexError as Error).message}` }, { status: 500 });
+    if (!indexExists) {
+      return APIErrorHandler.handleValidationError(`Index "${indexName}" does not exist. Please create it first using /api/create-index`, 400);
     }
 
-    console.log("✓ Starting document ingestion...");
+    Logger.success("Starting document ingestion...");
     if (pageRanges && pageRanges.length > 0) {
-      console.log("✓ Page ranges specified:", pageRanges);
+      Logger.info("Page ranges specified:", pageRanges);
     }
 
     // Process the HSC26 PDF with optional page ranges
-    console.log("Processing HSC26 PDF...");
-    let chunks;
-    try {
-      chunks = await processHSC26PDF(pageRanges);
-      console.log(`✓ PDF processing complete: ${chunks.length} chunks created`);
-    } catch (pdfError) {
-      console.error("Error processing PDF:", pdfError);
-      return NextResponse.json({ error: `Failed to process PDF: ${(pdfError as Error).message}` }, { status: 500 });
-    }
-
-    // Get the index
-    console.log("Initializing Pinecone index connection...");
-    let index;
-    try {
-      index = pinecone.index(indexName);
-      console.log("✓ Pinecone index connection established");
-    } catch (indexError) {
-      console.error("Error connecting to Pinecone index:", indexError);
-      return NextResponse.json({ error: `Failed to connect to Pinecone index: ${(indexError as Error).message}` }, { status: 500 });
-    }
+    Logger.info("Processing HSC26 PDF...");
+    const pdfProcessor = new PDFProcessorService();
+    const chunks = await pdfProcessor.processHSC26PDF({ pageRanges });
+    Logger.success(`PDF processing complete: ${chunks.length} chunks created`);
 
     // Process chunks in batches to avoid rate limits
     const batchSize = 10;
     let processedCount = 0;
-    console.log(`Starting batch processing: ${chunks.length} chunks, batch size: ${batchSize}`);
+    Logger.info(`Starting batch processing: ${chunks.length} chunks, batch size: ${batchSize}`);
 
     for (let i = 0; i < chunks.length; i += batchSize) {
       const batch = chunks.slice(i, i + batchSize);
-      console.log(`Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(chunks.length / batchSize)} (${batch.length} chunks)`);
+      const batchNumber = Math.floor(i / batchSize) + 1;
+      const totalBatches = Math.ceil(chunks.length / batchSize);
+
+      Logger.info(`Processing batch ${batchNumber}/${totalBatches} (${batch.length} chunks)`);
 
       // Create embeddings for the batch
-      console.log("Creating embeddings...");
-      let embeddings;
-      try {
-        embeddings = await Promise.all(
-          batch.map(async (chunk, batchIdx) => {
-            try {
-              console.log(`  - Creating embedding for chunk ${chunk.metadata.chunk_index} (${chunk.content.length} chars)`);
-              const response = await openai.embeddings.create({
-                model: "text-embedding-ada-002",
-                input: chunk.content,
-              });
-              console.log(`  ✓ Embedding created for chunk ${chunk.metadata.chunk_index}`);
-              return response.data[0].embedding;
-            } catch (error) {
-              console.error(`  ✗ Error creating embedding for chunk ${chunk.metadata.chunk_index}:`, error);
-              throw error;
-            }
-          })
-        );
-        console.log(`✓ All embeddings created for batch (${embeddings.length} embeddings)`);
-      } catch (embeddingError) {
-        console.error("Error creating embeddings:", embeddingError);
-        return NextResponse.json({ error: `Failed to create embeddings: ${(embeddingError as Error).message}` }, { status: 500 });
-      }
+      Logger.info("Creating embeddings...");
+      const embeddings = await Promise.all(
+        batch.map(async (chunk: DocumentChunk, batchIdx: number) => {
+          Logger.debug(`Creating embedding for chunk ${chunk.metadata.chunk_index} (${chunk.content.length} chars)`);
+          const embedding = await openaiService.createEmbedding(chunk.content);
+          Logger.debug(`Embedding created for chunk ${chunk.metadata.chunk_index}`);
+          return embedding;
+        })
+      );
+      Logger.success(`All embeddings created for batch (${embeddings.length} embeddings)`);
 
       // Prepare vectors for upsert
-      console.log("Preparing vectors for Pinecone upsert...");
-      const vectors = batch.map((chunk, idx) => ({
+      Logger.info("Preparing vectors for Pinecone upsert...");
+      const vectors: PineconeVector[] = batch.map((chunk: DocumentChunk, idx: number) => ({
         id: `hsc26_chunk_${chunk.metadata.chunk_index}`,
         values: embeddings[idx],
         metadata: {
@@ -130,42 +93,31 @@ export async function POST(req: NextRequest) {
           char_count: chunk.metadata.char_count,
         },
       }));
-      console.log(`✓ ${vectors.length} vectors prepared`);
+      Logger.success(`${vectors.length} vectors prepared`);
 
       // Upsert to Pinecone
-      console.log("Upserting vectors to Pinecone...");
-      try {
-        await index.upsert(vectors);
-        console.log(`✓ Batch upserted successfully`);
-      } catch (upsertError) {
-        console.error("Error upserting to Pinecone:", upsertError);
-        return NextResponse.json({ error: `Failed to upsert to Pinecone: ${(upsertError as Error).message}` }, { status: 500 });
-      }
+      Logger.info("Upserting vectors to Pinecone...");
+      await pineconeService.upsertVectors(vectors);
+      Logger.success("Batch upserted successfully");
 
       processedCount += batch.length;
-      console.log(`✓ Progress: ${processedCount}/${chunks.length} chunks processed`);
+      Logger.progress(processedCount, chunks.length, "chunks processed");
 
       // Add a small delay to respect rate limits
       if (i + batchSize < chunks.length) {
-        console.log("Waiting 1 second to respect rate limits...");
+        Logger.debug("Waiting 1 second to respect rate limits...");
         await new Promise((resolve) => setTimeout(resolve, 1000));
       }
     }
 
     // Verify the ingestion
-    console.log("Verifying ingestion by checking index stats...");
-    let stats;
-    try {
-      stats = await index.describeIndexStats();
-      console.log("✓ Index stats retrieved:", stats);
-    } catch (statsError) {
-      console.error("Error getting index stats:", statsError);
-      return NextResponse.json({ error: `Failed to verify ingestion: ${(statsError as Error).message}` }, { status: 500 });
-    }
+    Logger.info("Verifying ingestion by checking index stats...");
+    const stats = await pineconeService.getIndexStats();
+    Logger.success("Index stats retrieved:", stats);
 
-    console.log("🎉 INGESTION COMPLETED SUCCESSFULLY!");
-    console.log(`Total chunks processed: ${chunks.length}`);
-    console.log(`Total vectors in index: ${stats.totalRecordCount}`);
+    Logger.success("🎉 INGESTION COMPLETED SUCCESSFULLY!");
+    Logger.info(`Total chunks processed: ${chunks.length}`);
+    Logger.info(`Total vectors in index: ${stats.totalRecordCount}`);
 
     return NextResponse.json({
       message: "Document ingestion completed successfully",
@@ -176,18 +128,6 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (error) {
-    console.error("❌ CRITICAL INGESTION ERROR:", error);
-    console.error("Error name:", (error as Error).name);
-    console.error("Error message:", (error as Error).message);
-    console.error("Error stack:", (error as Error).stack);
-
-    return NextResponse.json(
-      {
-        error: "Failed to ingest document",
-        details: (error as Error).message,
-        errorType: (error as Error).name,
-      },
-      { status: 500 }
-    );
+    return APIErrorHandler.handleError(error, "CRITICAL INGESTION");
   }
 }
